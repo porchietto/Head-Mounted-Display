@@ -14,6 +14,7 @@ import pygame
 import time
 from MPU9250Driver import MPU
 from time import sleep
+from _ast import Pass
 # ----------------------
 print('Version de Python: ',(".".join(map(str, sys.version_info[:3]))))  
 print('Version de OpenCV: ', cv2.__version__)
@@ -122,7 +123,7 @@ def dibujarHorizonte(grados, horizonte_img):
     
     return True
 
-def dibujarObjetivos():
+def dibujarObjetivos(Situacion_local):
     '''no lo tengo claro aun'''
     global Frame
     global Lista_c
@@ -130,7 +131,7 @@ def dibujarObjetivos():
     
     k = 300 / tan(10) #Pixeles dividido tangente del FOV
     for objetivo in Objetivos:
-        objetivo_Proyectado = np.array(objetivo) - Situacion
+        objetivo_Proyectado = np.array(objetivo) - Situacion_local
         if np.all(np.abs(objetivo_Proyectado)[1:] < [10,10]):
             '''Si el objetivo esta en el campo de vision'''
             c = tuple(np.round(tan(objetivo_Proyectado[1:]) * k + np.array(Frame.shape)/2)[::-1].astype(int))
@@ -149,23 +150,26 @@ def update_frame():
     horizonte: grados de la cabeza respecto al horizonte.
     objetivos: Lista de tuplas en theta, phi de cada uno de los objetivos respecto de la cabeza."""
     global Frame
+    global bloqueo_Frame
     global retardo_update_frame
     tiempo_0 = float()
     #Cargo imágenes
     fondo_img = cv2.imread(os.path.join('/home/pi/fondo2.png'),cv2.IMREAD_GRAYSCALE)
     horizonte_img = cv2.imread(os.path.join('/home/pi/horizonte2.png'),cv2.IMREAD_GRAYSCALE)
     #objetivo_img = cv2.imread(os.path.join('/home/pi/Objetivo.png'),cv2.IMREAD_GRAYSCALE)
+    font = cv2.FONT_ITALIC
     while True:
         '''con los datos de Situacion, objetivos y demas vedura costruyo un nuevo frame.'''
         tiempo_0 = time.perf_counter()
-        font = cv2.FONT_HERSHEY_PLAIN
         with bloqueo_Frame:
             Frame[0:fondo_img.shape[0], 100:100+fondo_img.shape[1]] = fondo_img
             with bloqueo_Situacion:
-                cv2.putText(Frame, 'Situacion del casco: roll:%4.1f pich:%4.1f yaw:%4.1f' % tuple(Situacion), 
-                            (110,400), font, 0.7, 255, 1, cv2.LINE_AA)
-                dibujarHorizonte(Situacion[0], horizonte_img)
-                dibujarObjetivos()
+                Situacion_local = Situacion
+            cv2.putText(Frame, 'Situacion del casco: roll:%4.1f pich:%4.1f yaw:%4.1f' % tuple(Situacion_local), 
+                        (110,400), font, 0.5, 255, 1, cv2.LINE_AA)
+            dibujarHorizonte(Situacion_local[0], horizonte_img)
+            dibujarObjetivos(Situacion_local)
+            
         retardo_update_frame =  time.perf_counter() - tiempo_0
         time.sleep(0.1-retardo_update_frame)
         
@@ -220,7 +224,7 @@ def update_refencia_optica():
     ####VALORES QUE SE CREE VA A TENER EL LED AL ARRANCAR EL PROGRAMA####
     
     #areas en pixeles
-    areaminima=cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * cap.get(cv2.CAP_PROP_FRAME_WIDTH) / 2100
+    areaminima=cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * cap.get(cv2.CAP_PROP_FRAME_WIDTH) / 11000
     areamaxima=cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * cap.get(cv2.CAP_PROP_FRAME_WIDTH) / 800
     
     #coordenadas en X e Y
@@ -253,14 +257,14 @@ def update_refencia_optica():
         else:
             cap.set(PROP_CAP, 1)
         print(cap.get(PROP_CAP))
-        
+        '''
+        V = 0
         if V < 254:
-            V += 0.3
+            V += 1
         else:
             V = 0
-        '''
-        umbral_bajo = (110,90,130)
-        umbral_alto = (125,190,255)
+        umbral_bajo = (int(V),90,130)
+        umbral_alto = (int(V+1),190,255)
         tiempo_0 = time.perf_counter()
         cap.grab() #retorna un bool se puedu usar para controlar el while
         '''aqui le ordena a la camara capturar la imagen,
@@ -282,10 +286,13 @@ def update_refencia_optica():
         frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         frame_mask = cv2.inRange(frame_hsv, umbral_bajo, umbral_alto)
         frame_gauss = cv2.GaussianBlur(frame_mask,(3,3),0)
-        Frame_str = cv2.cvtColor(frame_gauss, cv2.COLOR_GRAY2RGB)
+        Frame_str = frame#cv2.cvtColor(frame_mask, cv2.COLOR_GRAY2RGB)
         #Calculo los contronos
         contornos, jerarquia = cv2.findContours(frame_gauss,cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(Frame_str, contornos, -1, (0,255,0), 3)
+        try:
+            cv2.drawContours(Frame_str, contornos, -1, (0,255,0), 3)
+        except:
+            pass
         
         referencias_LEDx = []
         referencias_LEDy = []
@@ -297,19 +304,22 @@ def update_refencia_optica():
                 (x, y), radio = cv2.minEnclosingCircle (contorno)#encierro en el minimo circulo posible el contorno
                 centro = (int (x), int (y))
                 radio = int (radio)
-                #cv2.drawMarker(Frame_str, centro, 255, cv2.MARKER_DIAMOND, 50, 2)
+                cv2.drawMarker(Frame_str, centro, 255, cv2.MARKER_DIAMOND, 50, 2)
                 referencias_LEDx.append(x)
                 referencias_LEDy.append(y)
-                cv2.drawContours(Frame_str, contorno, -1, (0,0,255), 3)
                 print(centro)
                 print(area)
                 print(areamaxima)
                 print(areaminima)
         print(referencias_LEDx.__len__())
-        '''if True:
-            centro = (int(np.mean(referencias_LEDx)), int(np.mean(referencias_LEDy)))
-            cv2.drawMarker(Frame_str, centro, 255, cv2.MARKER_STAR, 30, 2)
-        '''
+        if True:
+            try:
+                centro = (int(np.mean(referencias_LEDx)), int(np.mean(referencias_LEDy)))
+                cv2.drawMarker(Frame_str, centro, 255, cv2.MARKER_STAR, 30, 2)
+            except:
+                pass
+                
+        
         OffSetGyro = (mpu.gyroRoll,mpu.gyroPitch,mpu.gyroYaw) - np.array((0,0,0))
         retardo_update_refencia_optica =  time.perf_counter() - tiempo_0
 
