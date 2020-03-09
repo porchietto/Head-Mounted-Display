@@ -85,7 +85,6 @@ class MPU:
         self.GPIO               = GPIO
         self.Interrupt          = True
 
-
     def gyroSensitivity(self, x):
         # Create dictionary with standard value of 500 deg/s
         return {
@@ -352,9 +351,7 @@ class MPU:
     def calibrateGyro(self, N):
         # Display message
         print("Calibrating gyro with " + str(N) + " points. Do not move!")
-        '''valores encntrados a mano armar una funcion que minimice la deriva'''
         self.bus.write_i2c_block_data(self.MPU9250_ADDRESS, self.XG_OFFSET_H, [0,0,0,0,0,0])
-        
 
         # Take N readings for each coordinate and add to itself
         for ii in range(N):
@@ -363,6 +360,50 @@ class MPU:
             self.gyroYcal += self.gy
             self.gyroZcal += self.gz
 
+        # Find average offset value ¿para corregir la deriva tempotal? (depende de FS_SEL)
+        ''' Ver registro 27 Register Map '''
+        FS_SEL = self.gyroHex >> 3
+        self.gyroXcal /= N*4/2**FS_SEL
+        self.gyroYcal /= N*4/2**FS_SEL
+        self.gyroZcal /= N*4/2**FS_SEL
+        
+        if -32768 < int(self.gyroXcal) < 32767:
+            lx = int(-self.gyroXcal) & 0x00ff
+            hx = int(-self.gyroXcal) >> 8
+        else:
+            print("X Overflow")
+            
+        if -32768 < int(self.gyroYcal) < 32767:
+            ly = int(-self.gyroYcal) & 0x00ff
+            hy = int(-self.gyroYcal) >> 8
+        else:
+            print("Y Overflow")
+            
+        if -32768 < int(self.gyroZcal) < 32767:
+            lz = int(-self.gyroZcal) & 0x00ff
+            hz = int(-self.gyroZcal) >> 8
+        else:
+            print("Z Overflow")
+        
+        self.bus.write_i2c_block_data(self.MPU9250_ADDRESS, self.XG_OFFSET_H, [hx,lx,hy,ly,hz,lz])
+        
+        print(int(self.gyroXcal))
+        print("First Calibration")
+        print("\tX axis offset: " + str(round(self.gyroXcal,1)))
+        print("\tY axis offset: " + str(round(self.gyroYcal,1)))
+        print("\tZ axis offset: " + str(round(self.gyroZcal,1)) + "\n")
+        
+        '''self.gyroXcal = 0
+        self.gyroYcal = 0
+        self.gyroZcal = 0
+        
+        for ii in range(N):
+            self.readRawGyro()
+            self.gyroXcal += self.gx
+            self.gyroYcal += self.gy
+            self.gyroZcal += self.gz
+
+        # Find average offset value ¿para corregir la deriva tempotal?
         self.gyroXcal /= N
         self.gyroYcal /= N
         self.gyroZcal /= N
@@ -372,10 +413,58 @@ class MPU:
         print("\tX axis offset: " + str(round(self.gyroXcal,1)))
         print("\tY axis offset: " + str(round(self.gyroYcal,1)))
         print("\tZ axis offset: " + str(round(self.gyroZcal,1)) + "\n")
-
+        '''
         # Start the timer
         self.dtTimer = time.perf_counter()
+    
+    def updateCalibrateGyro(self, Deriba):
+        FS_SEL = self.gyroHex >> 3
+        
+        try:
+            rawData = self.bus.read_i2c_block_data(self.MPU9250_ADDRESS,  self.XG_OFFSET_H, 6)
+        except:
+            print('Read raw IMU data failed')
 
+        #estado de la correccion actual /= N*4/2**FS_SEL
+        self.gyroXcal = self.eightBit2sixteenBit(rawData[1], rawData[0])
+        self.gyroYcal = self.eightBit2sixteenBit(rawData[3], rawData[2])
+        self.gyroZcal = self.eightBit2sixteenBit(rawData[5], rawData[4])
+        
+        if Deriba[0] > 0:
+            self.gyroXcal -= 1
+        else:
+            self.gyroXcal += 1
+        
+        if Deriba[1] > 0:
+            self.gyroYcal -= 1
+        else:
+            self.gyroYcal += 1
+
+        if Deriba[2] > 0:
+            self.gyroZcal -= 1
+        else:
+            self.gyroZcal += 1
+
+        if -32768 < int(self.gyroXcal) < 32767:
+            lx = int(-self.gyroXcal) & 0x00ff
+            hx = int(-self.gyroXcal) >> 8
+        else:
+            print("X Overflow")
+            
+        if -32768 < int(self.gyroYcal) < 32767:
+            ly = int(-self.gyroYcal) & 0x00ff
+            hy = int(-self.gyroYcal) >> 8
+        else:
+            print("Y Overflow")
+            
+        if -32768 < int(self.gyroZcal) < 32767:
+            lz = int(-self.gyroZcal) & 0x00ff
+            hz = int(-self.gyroZcal) >> 8
+        else:
+            print("Z Overflow")
+        
+        self.bus.write_i2c_block_data(self.MPU9250_ADDRESS, self.XG_OFFSET_H, [hx,lx,hy,ly,hz,lz])
+        
     def calibrateMag(self, N):
         # Local calibration variables
         magBias = [0, 0, 0]
@@ -481,11 +570,11 @@ class MPU:
         self.readRawIMU()
         self.readRawMag()
 
-        # Subtract the offset calibration values for the gyro
+        '''# Subtract the offset calibration values for the gyro
         self.gx -= self.gyroXcal
         self.gy -= self.gyroYcal
         self.gz -= self.gyroZcal
-
+        '''
         # Convert the gyro values to degrees per second
         self.gx /= self.gyroScaleFactor
         self.gy /= self.gyroScaleFactor
@@ -510,11 +599,11 @@ class MPU:
         # Update the raw data
         self.readRawGyro()
 
-        # Subtract the offset calibration values for the gyro
+        '''# Subtract the offset calibration values for the gyro
         self.gx -= self.gyroXcal
         self.gy -= self.gyroYcal
         self.gz -= self.gyroZcal
-
+        '''
         # Convert the gyro values to degrees per second
         self.gx /= self.gyroScaleFactor
         self.gy /= self.gyroScaleFactor

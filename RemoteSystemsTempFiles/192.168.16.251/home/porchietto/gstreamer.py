@@ -1,11 +1,12 @@
 import time
 import cv2
 import os
+import threading
 
 # Cam properties
 fps = 2.
-frame_width = 2304
-frame_height = 1536
+frame_width = 1920
+frame_height = 1080
 # Create capture
 '''https://docs.opencv.org/4.1.2/d4/d15/group__videoio__flags__base.html 
 cv2.CAP_V4L2 = 200
@@ -79,27 +80,42 @@ gst_str_rtp = 'appsrc ! videoconvert ! video/x-raw,format=YUY2 ! queue ! jpegenc
 if cap.isOpened() is not True:
     print('Cannot open camera. Exiting.')
     quit()
+
 fourcc = cap.get(cv2.CAP_PROP_FOURCC)
-print(decode_fourcc(fourcc))
+#print(decode_fourcc(fourcc))
 # Create videowriter as a SHM sink
 out = cv2.VideoWriter(gst_str_rtp, cv2.CAP_GSTREAMER, 0, fps, (frame_width, frame_height), True)
 
 
-cap.set(cv2.CAP_PROP_CONTRAST, 140)
-cap.set(cv2.CAP_PROP_BRIGHTNESS, 150)
-cap.set(cv2.CAP_PROP_SATURATION, 0) 
+cap.set(cv2.CAP_PROP_CONTRAST, 128)
+cap.set(cv2.CAP_PROP_BRIGHTNESS, 128)
+cap.set(cv2.CAP_PROP_SATURATION, 128)
+cap.set(cv2.CAP_PROP_ZOOM, 0)
+cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+cap.set(cv2.CAP_PROP_FOCUS, 30) # 0 cerca 254 lejos
+cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1) # 1 desabilitado 3 habilitado
+cap.set(cv2.CAP_PROP_EXPOSURE, 30) # 0 corto tiempo de expocicion 2048 largo tiempo de expocicion
+cap.set(cv2.CAP_PROP_AUTO_WB, 0) # 0 Deshabilita el balance de blancos
+cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 5000)
+cap.set(cv2.CAP_PROP_GAIN,128)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
 # Loop it
 retardo_update_frame = float()  
+
 while True:
+    os.system('clear')
     tiempo_0 = time.perf_counter()
     # Get the frame 
+    print('grab')
     cap.grab()
     '''aqui le ordena a la camara capturar la imagen,
     se va a demorar hasta que este capturada  si la camara ya la capturo lo devuelve de imediato , 
     lo importante es que la marca de tiempo al salir del cuadro es precisa
     '''
     tiempo_1 = time.perf_counter()
-    ret, frame = cap.retrieve(0)
+    print('retrive')
+    ret, frame = cap.retrieve()
     '''Aqui recibe la imagen desde la camara, es un cuadro que ya se capturo previamente y quedo en el buffer'''
     tiempo_2 = time.perf_counter()
     #time.sleep(50/1000)
@@ -112,13 +128,12 @@ while True:
     else:
         print('Camera error.')
         time.sleep(10)
-    os.system('clear')
-    '''PROP_CAP = cv2.CAP_PROP_CHANNEL
+    '''PROP_CAP = cv2.CAP_PROP_BUFFERSIZE
     if cap.get(PROP_CAP) < 254:
         cap.set(PROP_CAP, cap.get(PROP_CAP) + 1)
     else:
         cap.set(PROP_CAP, 1)
-    '''    
+    '''
     print(cap.get(cv2.CAP_PROP_BRIGHTNESS))
     print(cap.get(cv2.CAP_PROP_CONTRAST))
     print(cap.get(cv2.CAP_PROP_SATURATION))
@@ -131,4 +146,8 @@ while True:
     print('Tiempo para enviar cuadro por gstreamer %3.0f ms' % ((tiempo_4 - tiempo_3)*1000))
     print('Tiempo total %3.0f ms' % ((time.perf_counter() - tiempo_0)*1000))
     print('FPS:', 1/(time.perf_counter() - tiempo_0))
+
+hilo_camara = threading.Thread(name='camara', target=camara)
+hilo_camara.start()
+time.sleep(10)
 cap.release()

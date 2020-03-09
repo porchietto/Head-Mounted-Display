@@ -13,6 +13,8 @@ import threading
 import pygame
 import time
 from MPU9250Driver import MPU
+
+import json
 # ----------------------
 print('Version de Python: ',(".".join(map(str, sys.version_info[:3]))))  
 print('Version de OpenCV: ', cv2.__version__)
@@ -24,10 +26,10 @@ bloqueo_IMU = threading.Lock()
 
 #Variable global donde se va a guardar la pocicion de la cabeza en la terna roll pich y yaw
 
-Situacion = np.array((0,0,0))
+Situacion = [0,0,0]
 bloqueo_Situacion = threading.Lock()
 
-DeribaGyro = [0,0,0]
+OffSetGyro = [0,0,0]
 
 # -------------------
 # constantes
@@ -49,6 +51,12 @@ bloqueo_Frame = threading.Lock()
 Frame_str = []
 bloqueo_Frame_str = threading.Lock()
 
+#Creo array de tiempos
+
+tiempo_inicio = time.perf_counter()
+tiempos = []
+contador_frame = 0
+
 
 '''Redefinicion de funciones matenaticas para usarlas en grados.
 Es deceable poder implementar en futuro optimizaciones como una serie de lorenz para mejorar la velocidad.'''
@@ -60,9 +68,6 @@ def cos(grados):
 
 def tan(grados):
     return np.tan(np.radians(grados))
-
-def arctan2(x,y):
-    return np.rad2deg(np.arctan2(x,y))
 
 '''Lista de tuplas que contiene todos los objetivos a marcar.
    Estan expresado en gados. Roll, Pitch y Yaw repectivamete.'''   
@@ -84,27 +89,55 @@ def update_display():
     utilizar un semaforo para bloquear a Frame mientras se lee"""
     global retardo_update_display
     global bloqueo_Frame
+    global tiempos
+    global contador_frame
     # greyscale Palette
     grey_palette = [(0, 0, 0)]
     for i in range(1, 256):
         grey_palette.append( (i, i, i) )
-    tiempo_0 = float()
     screen = display_init()
     while True:
         '''En teoria segun la libreria pygame.display.flip() debiera esperar al VSync por estar accediendo al FB
         https://www.pygame.org/docs/ref/display.html#pygame.display.flip'''
-        tiempo_0 = time.perf_counter()
+        contador_frame += 1
         # Limpio el display
         #screen.fill((0,0,0))
         # Copio la variable Frame a una imagen de pygame
+        t0_frame = time.perf_counter()
         with bloqueo_Frame:
+            t_escritura = time.perf_counter()
             pgFrame = pygame.image.frombuffer(Frame, (WIDTH,HEIGHT), 'P')
+        # Tiempo en el cual se recupera el frame y guarda en una variable de pygame
+        tf_frame = time.perf_counter()
+        t_frame = 't_frame', round(((tf_frame - tiempo_inicio)*1000),2), contador_frame
+        tiempos.append(t_frame)
+        # Retardo para recuperar el frame
+        retardo_frame = 'retardo_frame', round(((tf_frame - t0_frame)*1000),2), contador_frame
+        tiempos.append(retardo_frame)
+        # Retardo para escribir el frame en una variable de pygame
+        retardo_escritura = 'retardo_escritura',round(((tf_frame - t_escritura)*1000),2), contador_frame
+        tiempos.append(retardo_escritura)
+        t0_display = time.perf_counter()
         pgFrame.set_palette(grey_palette)
         #Escribo la pantalla
         screen.blit(pgFrame, (0,0))
         #Cambio el cuadro
+        t0_flip = time.perf_counter()
         pygame.display.flip()
-        retardo_update_display =  time.perf_counter() - tiempo_0
+        tf_flip = time.perf_counter()
+        # Retardo del flip
+        retardo_flip = 'retardo_flip',round(((tf_flip - t0_flip)*1000),2), contador_frame
+        tiempos.append(retardo_flip)
+        # Tiempo en el cual se actualiza la pantalla y comienza el bucle nuevamente
+        tf_display = time.perf_counter()
+        t_display = 't_display', round(((tf_display - tiempo_inicio)*1000),2), contador_frame
+        tiempos.append(t_display)
+        # Retardo para actualizar la pantalla despues que se obtiene el frame
+        retardo_display = 'retardo_display', round(((tf_display - t0_display)*1000),2), contador_frame
+        tiempos.append(retardo_display)
+        # Retardo total del bucle
+        retardo_bucle = 'retardo_bucle_display', round(((tf_display - t0_frame)*1000),2), contador_frame
+        tiempos.append(retardo_bucle)
 
 
 def dibujarHorizonte(grados, horizonte_img):
@@ -153,7 +186,8 @@ def update_frame():
     global Frame
     global bloqueo_Frame
     global retardo_update_frame
-    tiempo_0 = float()
+    #global contador_frame
+    #tiempo_0 = float()
     #Cargo imágenes
     fondo_img = cv2.imread(os.path.join('/home/pi/fondo2.png'),cv2.IMREAD_GRAYSCALE)
     horizonte_img = cv2.imread(os.path.join('/home/pi/horizonte2.png'),cv2.IMREAD_GRAYSCALE)
@@ -161,8 +195,16 @@ def update_frame():
     font = cv2.FONT_ITALIC
     while True:
         '''con los datos de Situacion, objetivos y demas vedura costruyo un nuevo frame.'''
-        tiempo_0 = time.perf_counter()
+        t0_bloqueo = time.perf_counter()
         with bloqueo_Frame:
+            # Tiempo en el cual se bloquea el frame
+            tf_bloqueo = time.perf_counter()
+            t_bloqueo = 't_bloqueo', round(((tf_bloqueo - tiempo_inicio)*1000),2), contador_frame
+            tiempos.append(t_bloqueo)
+            # Retardo para el cual el frame esta bloqueado
+            retardo_bloqueo = 'retardo_bloqueo', round(((tf_bloqueo - t0_bloqueo)*1000),2), contador_frame
+            tiempos.append(retardo_bloqueo)
+            t0_dibujo = time.perf_counter()
             Frame[0:fondo_img.shape[0], 100:100+fondo_img.shape[1]] = fondo_img
             with bloqueo_Situacion:
                 Situacion_local = Situacion
@@ -170,13 +212,18 @@ def update_frame():
                         (110,400), font, 0.5, 255, 1, cv2.LINE_AA)
             dibujarHorizonte(Situacion_local[0], horizonte_img)
             dibujarObjetivos(Situacion_local)
-            
-        retardo_update_frame =  time.perf_counter() - tiempo_0
-        '''Si los Frame salen cada 15 ms o 60 hz y tarde menos que eso puedo esperar para construir el proximo. 
-        no es un metodo muy eficiente ni preciso ya que no mantengo ningun tipo de sincronimo con la pantalla.
-        '''
+        # Tiempo en el cual se termina de dibujar el frame
+        tf_dibujo = time.perf_counter()
+        t_dibujo = 't_dibujo', round(((tf_dibujo - tiempo_inicio)*1000),2), contador_frame
+        tiempos.append(t_dibujo)
+        # Retardo para dibujar el frame
+        retardo_dibujo = 'retardo_dibujo', round(((tf_dibujo - t0_dibujo)*1000),2), contador_frame
+        tiempos.append(retardo_dibujo)
         if retardo_update_frame < 15/1000:
             time.sleep(15/1000-retardo_update_frame)
+        # Retardo total del bucle
+        retardo_bucle = 'retardo_bucle_frame', round(((tf_dibujo - t0_bloqueo)*1000),2), contador_frame
+        tiempos.append(retardo_bucle)
         
 evento_IMU = threading.Event()
 def read_IMU():
@@ -192,6 +239,7 @@ def read_IMU():
     tau = 0.98
     global mpu 
     mpu = MPU(gyro, acc, mag, tau)
+    global tiempos
 
     # Set up the IMU and mag sensors
     mpu.setUpIMU()
@@ -209,104 +257,14 @@ def read_IMU():
     while True:
         mpu.integartorFilter()
         with bloqueo_Situacion:
-            Situacion = np.array((mpu.gyroRoll, mpu.gyroPitch, mpu.gyroYaw)) - DeribaGyro
-'''
-Metodo de deteccion por area de un triangulo muy poco eficiente
-https://davidgarciafer.github.io/Colinear-Points/'''
-def colineal_equidistante(x_values, y_values, margen, tamaño):
-    size = len(x_values)
-    arreglo_x = []
-    arreglo_y = []
-    for i in range(size):
-        x1, y1 = x_values[i], y_values[i]
-        for j in range(i, size):
-            if i == j:
-                continue
-            x2, y2 = x_values[j], y_values[j]
-            for k in range(j, size):
-                if i == k or j == k:
-                    continue
-                x3, y3 = x_values[k], y_values[k]
-                # Comprobamos si el area es nula
-                area = np.abs(x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2))/2
-                distancias = []
-                distancias.append(np.sqrt((x1-x2)**2 + (y1-y2)**2))
-                distancias.append(np.sqrt((x2-x3)**2 + (y2-y3)**2))
-                distancias.append(np.sqrt((x1-x3)**2 + (y1-y3)**2))
-                distancias.sort()
-                '''Diferencia de distancia entres los dos segmentos mas cortos'''
-                diferencia1 = np.abs(distancias[0] - distancias[1])
-                '''Diferencia de distancia entre el segmento mas largo y lo que se espera que tenga el patron'''
-                diferencia2 = np.abs(distancias[2] - tamaño)
-                if area < margen**2 and diferencia1 < margen and diferencia2 < margen*2:
-                    arreglo_x += x1, x2, x3
-                    arreglo_y += y1, y2, y3
-                    
-                    #El centro se toma como el promedio de los tres centros
-                    arreglo_x.append(int(np.mean([x1,x2,x3])))
-                    arreglo_y.append(int(np.mean([y1,y2,y3])))
-                    
-                    #Para calcular el angulo verifico el orden en que aparecen los punto no es una forma muy elegante :( 
-                    if x1 < x2 < x3:
-                        arreglo_x.append(np.mean((
-                            np.rad2deg(np.arctan2(x2-x1,y2-y1)), 
-                            np.rad2deg(np.arctan2(x3-x1,y3-y1)), 
-                            np.rad2deg(np.arctan2(x3-x2,y3-y2))
-                            )))
-                        #print('caso 1')
-                    elif x1 < x3 < x2:
-                        arreglo_x.append(np.mean((
-                            np.rad2deg(np.arctan2(x2-x1,y2-y1)),
-                            np.rad2deg(np.arctan2(x3-x1,y3-y1)),
-                            np.rad2deg(np.arctan2(x2-x3,y2-y3))
-                            )))
-                        #print('caso 2')
-                    elif x2 < x1 < x3:
-                        arreglo_x.append(np.mean((
-                            np.rad2deg(np.arctan2(x1-x2,y1-y2)),
-                            np.rad2deg(np.arctan2(x3-x1,y3-y1)),
-                            np.rad2deg(np.arctan2(x3-x2,y3-y2))
-                            )))
-                        #print('caso 3')
-                    elif x2 < x3 < x1:
-                        arreglo_x.append(np.mean((
-                            np.rad2deg(np.arctan2(x1-x2,y1-y2)),
-                            np.rad2deg(np.arctan2(x1-x3,y1-y3)),
-                            np.rad2deg(np.arctan2(x3-x2,y3-y2))
-                            )))
-                        #print('caso 4')
-                    elif x3 < x1 < x2:
-                        arreglo_x.append(np.mean((
-                            np.rad2deg(np.arctan2(x2-x1,y2-y1)),
-                            np.rad2deg(np.arctan2(x1-x3,y1-y3)),
-                            np.rad2deg(np.arctan2(x2-x3,y2-y3))
-                            )))
-                        #print('caso 5')
-                    elif x3 < x2 < x1:
-                        arreglo_x.append(np.mean((
-                            np.rad2deg(np.arctan2(x1-x2,y1-y2)),
-                            np.rad2deg(np.arctan2(x1-x3,y1-y3)),
-                            np.rad2deg(np.arctan2(x2-x3,y2-y3))
-                            )))
-                        #print('caso 6')           
-                    else:
-                        arreglo_x.append(0)
-                        #print('caso no contemplado')
-                    arreglo_y.append(distancias[2])
-                    #print('Se alinearon los astros.')
-                    #print('Area del triangulo: ' + str(area))
-                    #print('Diferencia de distancia entre Segmentos mas cortos: ' + str(int(diferencia1)))
-                    #print('Diferencia de distancia entre Segmento mas largo y el tamaño esperado: ' + str(int(diferencia2)))                    
-    #print(centros)
-    #print(angulos)
-    return arreglo_x, arreglo_y
+            Situacion = np.array((mpu.gyroRoll, mpu.gyroPitch, mpu.gyroYaw)) - OffSetGyro
 
 retardo_update_refencia_optica = float()
 def update_refencia_optica():
     tiempo_0 = float()
     global retardo_update_refencia_optica
     global Frame_str
-    global DeribaGyro
+    global OffSetGyro
     '''Contro de WEBCam'''
     cap = cv2.VideoCapture(0,cv2.CAP_V4L2)#0 corresponde a /dev/video0, backend V4L2
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
@@ -319,13 +277,20 @@ def update_refencia_optica():
     ####VALORES QUE SE CREE VA A TENER EL LED AL ARRANCAR EL PROGRAMA####
     
     #areas en pixeles
-    area_frame = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-    areaminima= 40
-    areamaxima= 270
+    areaminima=cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * cap.get(cv2.CAP_PROP_FRAME_WIDTH) / 11000
+    areamaxima=cap.get(cv2.CAP_PROP_FRAME_HEIGHT) * cap.get(cv2.CAP_PROP_FRAME_WIDTH) / 7000
     
-    #margen de linealidad
-    margen = 20
-    tamaño = 400
+    #coordenadas en X e Y
+    ejex=300
+    ejey=200
+    
+    #radio maximo
+    difereciaradio=20
+    
+    #diferencia maxima de posicion en frames contiguos
+    diferenciaposicion=80
+    
+    contador=0
     #########################################################
     
     if (cap.isOpened()): #devuelve verdadero si la captura del video ya se ha inicializado
@@ -338,16 +303,16 @@ def update_refencia_optica():
     cap.set(cv2.CAP_PROP_BRIGHTNESS, 128)
     cap.set(cv2.CAP_PROP_SATURATION, 128)
     cap.set(cv2.CAP_PROP_ZOOM, 0)
-    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+    cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
     cap.set(cv2.CAP_PROP_FOCUS, 30) # 0 cerca 254 lejos
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1) # 1 desabilitado 3 habilitado
-    cap.set(cv2.CAP_PROP_EXPOSURE, 60) # 0 corto tiempo de expocicion 2048 largo tiempo de expocicion
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3) # 1 desabilitado 3 habilitado
+    cap.set(cv2.CAP_PROP_EXPOSURE, 40) # 0 corto tiempo de expocicion 2048 largo tiempo de expocicion
     cap.set(cv2.CAP_PROP_AUTO_WB, 1) # 0 Deshabilita el balance de blancos
     #cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 5000)
-    cap.set(cv2.CAP_PROP_GAIN,100)
+    cap.set(cv2.CAP_PROP_GAIN,0)
     cap.set(cv2.CAP_PROP_BUFFERSIZE,1)
     
-    V = 50
+    V = 145
     while(True):
         '''PROP_CAP = cv2.CAP_PROP_BRIGHTNESS
         if cap.get(PROP_CAP) < 254:
@@ -358,23 +323,18 @@ def update_refencia_optica():
         Ver el link 
         https://www.learnopencv.com/color-spaces-in-opencv-cpp-python/
         '''
-        umbral_bajo = 45
-        umbral_alto = 170
-        '''
-        if V < 190:
-            V += 1
+        umbral_bajo = (155,1,250)
+        umbral_alto = (165,3,255)
+        '''if V < 170:
+            V += 0.1
         else:
-            V = 10
+            V = 145
         
-        umbral_bajo = int(V)
-        umbral_alto = int(V) +2
-        print(umbral_bajo)
-        '''
-       
+        umbral_bajo = (int(V),1,250)
+        umbral_alto = (int(V) +10,3,255)
+        print(umbral_bajo)'''
+        
         tiempo_0 = time.perf_counter()
-        '''grabo el valor de los giroscopos para calcular la deriba al momento de capturar la imagen.
-         sino estaria intruciendo un error por el tiempo que tardo en procesar la imagen.'''
-        Giroscopos_tf = (mpu.gyroRoll,mpu.gyroPitch,mpu.gyroYaw)
         cap.grab() #retorna un bool se puedu usar para controlar el while
         '''aqui le ordena a la camara capturar la imagen,
         se va a demorar hasta que este capturada  si la camara ya la capturo lo devuelve de imediato , 
@@ -386,62 +346,53 @@ def update_refencia_optica():
         # Captura marco por marco 
         ret, frame = cap.retrieve()
         '''Aqui recibe la imagen desde la camara, es un cuadro que ya se capturo previamente y quedo en el buffer'''
-                    
-        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame_gauss = cv2.GaussianBlur(frame_gray,(3,3),0)
-        frame_mask = cv2.inRange(frame_gauss, umbral_bajo, umbral_alto)
+        if ret is True:
+           pass#Frame_str = frame#para enviar la telemetria de video
+        '''El espacio de color HSV trabaja por tonalidad, saturacion y brillo, 
+        lo que es muy util ya que la saturacion y brillo pueden cambiar deacuerdo a las condiciones externas 
+        pero la tonalidad no'''
+            
+        frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        frame_mask = cv2.inRange(frame_hsv, umbral_bajo, umbral_alto)
+        frame_gauss = cv2.GaussianBlur(frame_mask,(9,9),0)
         try:
-            Frame_str = frame#cv2.cvtColor(frame_mask, cv2.COLOR_GRAY2RGB)
+            Frame_str = frame#cv2.cvtColor(frame_gauss, cv2.COLOR_GRAY2RGB)
         except:
             pass
         #Calculo los contronos
-        contornos, jerarquia = cv2.findContours(frame_mask,cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(Frame_str, contornos, -1, (0,255,0), 1)
+        contornos, jerarquia = cv2.findContours(frame_gauss,cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        try:
+            cv2.drawContours(Frame_str, contornos, -1, (0,255,0), 3)
+        except:
+            pass
         
         referencias_LEDx = []
         referencias_LEDy = []
 
+        #print(contornos.__len__())      
         for contorno in contornos:#recorro todos los contornos encontrados
             area=cv2.contourArea(contorno)#calculo el area del controno i
-            (x, y), radio = cv2.minEnclosingCircle (contorno)#encierro en el minimo circulo posible el contorno
-            centro = (int (x), int (y))
-            radio = int (radio)
-            cv2.putText(Frame_str, str(area), tuple(sum(x) for x in zip(centro, (-20,60))), cv2.FONT_ITALIC,1, (0,0,255), 1, cv2.LINE_AA)
-            if(areaminima <area< areamaxima):#filtro por area
+            if(areaminima <area< areamaxima):#filtropor area
+                (x, y), radio = cv2.minEnclosingCircle (contorno)#encierro en el minimo circulo posible el contorno
+                centro = (int (x), int (y))
+                radio = int (radio)
                 cv2.drawMarker(Frame_str, centro, 255, cv2.MARKER_DIAMOND, 50, 2)
-                referencias_LEDx.append(int(x))
-                referencias_LEDy.append(int(y))
-        # arreglo_x : x1,x2,x3,cx,a,...
-        # arreglo_y : y1,y2,y3,cy,tamaño,...
-
-        arreglo_x, arreglo_y = colineal_equidistante(referencias_LEDx, referencias_LEDy, margen, tamaño)
+                referencias_LEDx.append(x)
+                referencias_LEDy.append(y)
+                '''print(centro)
+                print(area)
+                print(areamaxima)
+                print(areaminima)'''
+        print(referencias_LEDx.__len__())
+        if True:
+            try:
+                centro = (int(np.mean(referencias_LEDx)), int(np.mean(referencias_LEDy)))
+                cv2.drawMarker(Frame_str, centro, 255, cv2.MARKER_STAR, 30, 2)
+            except:
+                pass
+                
         
-        for i in range(0,len(arreglo_x),5):
-            cv2.line(Frame_str,(arreglo_x[i],arreglo_y[i]),(arreglo_x[i+1],arreglo_y[i+1]),(255,255,0),2,cv2.LINE_AA)
-            cv2.line(Frame_str,(arreglo_x[i],arreglo_y[i]),(arreglo_x[i+2],arreglo_y[i+2]),(255,255,0),2,cv2.LINE_AA)
-            cv2.line(Frame_str,(arreglo_x[i+1],arreglo_y[i+1]),(arreglo_x[i+2],arreglo_y[i+2]),(255,255,0),2,cv2.LINE_AA)
-            cv2.drawMarker(Frame_str, (arreglo_x[i+3], arreglo_y[i+3]), (128,128,128), cv2.MARKER_STAR, 30, 2)
-            cv2.putText(Frame_str, str(arreglo_x[i+4]), (arreglo_x[i+3]-30,arreglo_y[i+3]-30), cv2.FONT_ITALIC,1, (255,255,0), 1, cv2.LINE_AA)
-        '''Bucle de control realimentado.
-         Se tendria que controlar:
-                                margen
-                                tamaño
-                                area minima y maxima 
-                                anda maaaalll
-                                
-        '''
-        if len(arreglo_x) < 5 and margen < 40:
-            margen += 1
-        else:
-            margen -= 1
-        #print(margen)        
-        if len(arreglo_x) == 5:
-            #Se cumplieron todas las condiciones para un solo partron
-            tamaño = arreglo_y[4]
-            #realizo el calculo de la reriba acumulada
-            DeribaGyro = Giroscopos_tf - np.array((0,0,0))
-            mpu.updateCalibrateGyro(DeribaGyro)
-            print(DeribaGyro)
+        OffSetGyro = (mpu.gyroRoll,mpu.gyroPitch,mpu.gyroYaw) - np.array((0,0,0))
         retardo_update_refencia_optica =  time.perf_counter() - tiempo_0
 
 def telemetria_consola():
@@ -464,7 +415,7 @@ def telemetria_video():
     Reseptor :
     gst-launch-1.0 -v udpsrc port=5000 ! "application/x-rtp,media=(string)video,encoding-name=(string)JPEG" ! rtpjpegdepay ! jpegdec ! xvimagesink sync=false
     '''
-    gst_str_rtp = 'appsrc ! videoconvert ! video/x-raw,format=YUY2 ! queue ! jpegenc ! jpegparse ! rtpjpegpay ! udpsink host=192.168.16.109 port=5000'
+    gst_str_rtp = 'appsrc ! videoconvert ! video/x-raw,format=YUY2 ! queue ! jpegenc ! jpegparse ! rtpjpegpay ! udpsink host=192.168.16.15 port=5000'
     fps = 10 #VideoWriter matiene la tasa 
     out = cv2.VideoWriter(gst_str_rtp, cv2.CAP_GSTREAMER, 0, fps, (Frame_str.shape[1], Frame_str.shape[0]), True)
     while True:
@@ -493,8 +444,10 @@ hilo_update_display.start()
 hilo_update_refencia_optica.start()
 
 time.sleep(5)
-#hilo_telemetria_consola.start()
-#hilo_telemetria_video.start()
+hilo_telemetria_consola.start()
+hilo_telemetria_video.start()
 time.sleep(10)
 
-time.sleep(2000)
+time.sleep(20)
+with open('data8.json', 'w') as file:
+    json.dump(tiempos, file, indent=4)
